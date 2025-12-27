@@ -14,6 +14,13 @@ impl HelloWorld {
         let text_input = cx.new(|cx| TextInput::new(cx));
         let styled_input = cx.new(|cx| TextInput::new(cx).placeholder("Enter your name..."));
 
+        let text_editor = cx.new(|cx| {
+            TextEditor::with_text(
+                "// Click a file in the worktree to open it\n// Cmd+S to save",
+                cx,
+            )
+        });
+
         // Load the current project directory as worktree
         let worktree = cx.new(|cx| {
             Worktree::new(".", cx).unwrap_or_else(|_| {
@@ -21,8 +28,9 @@ impl HelloWorld {
             })
         });
 
-        let text_editor = cx.new(|cx| {
-            TextEditor::with_text("// Start typing here...\n// Arrow keys to move cursor\n// Backspace/Delete to remove text", cx)
+        // Set the editor reference in the worktree so it can open files
+        worktree.update(cx, |tree, _cx| {
+            tree.set_editor(text_editor.clone());
         });
 
         Self {
@@ -37,18 +45,29 @@ impl HelloWorld {
 
 impl Render for HelloWorld {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_row()
-            .bg(rgb(0xffffff))
-            .size_full()
-            .child(
+        let mut root = div().flex().flex_row().bg(rgb(0xffffff)).size_full();
+
+        // Add worktree on the left if it exists
+        if let Some(worktree) = &self.worktree {
+            root = root.child(
                 div()
-                    .text_sm()
-                    .text_color(rgb(0x666666))
-                    .child("Basic Text Editor (Rope-based):"),
-            )
-            .child(self.text_editor.clone())
+                    .w(px(300.))
+                    .h_full()
+                    .border_r_1()
+                    .border_color(rgb(0xe5e5e5))
+                    .overflow_hidden()
+                    .child(worktree.clone()),
+            );
+        }
+
+        // Add text editor on the right
+        root.child(
+            div()
+                .flex_1()
+                .h_full()
+                .p_4()
+                .child(self.text_editor.clone()),
+        )
     }
 }
 

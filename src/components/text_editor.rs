@@ -1,5 +1,6 @@
+use crate::components::Buffer;
 use gpui::{prelude::*, *};
-use ropey::Rope;
+use std::path::PathBuf;
 
 // Define actions for the text editor
 actions!(
@@ -15,13 +16,16 @@ actions!(
         Paste,
         Copy,
         Cut,
+        Save,
+        Undo,
+        Redo,
     ]
 );
 
-/// A basic text editor component
+/// A text editor component that provides UI for editing a Buffer
 pub struct TextEditor {
     focus_handle: FocusHandle,
-    buffer: Rope,
+    buffer: Buffer,
     cursor: usize, // Cursor position in bytes
 }
 
@@ -29,19 +33,34 @@ impl TextEditor {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
-            buffer: Rope::new(),
+            buffer: Buffer::new(),
             cursor: 0,
         }
     }
 
     pub fn with_text(text: impl Into<String>, cx: &mut Context<Self>) -> Self {
-        let text = text.into();
-        let cursor = text.len();
+        let buffer = Buffer::with_text(text);
+        let cursor = buffer.len_bytes();
         Self {
             focus_handle: cx.focus_handle(),
-            buffer: Rope::from_str(&text),
+            buffer,
             cursor,
         }
+    }
+
+    pub fn open_file(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        if let Ok(()) = self.buffer.load_file(path) {
+            self.cursor = 0;
+            cx.notify();
+        }
+    }
+
+    pub fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    pub fn buffer_mut(&mut self) -> &mut Buffer {
+        &mut self.buffer
     }
 
     fn insert_char(&mut self, c: char, cx: &mut Context<Self>) {
@@ -126,13 +145,38 @@ impl TextEditor {
     fn cut(&mut self, _: &Cut, _window: &mut Window, cx: &mut Context<Self>) {
         let text = self.buffer.to_string();
         cx.write_to_clipboard(ClipboardItem::new_string(text));
-        self.buffer = Rope::new();
+        self.buffer.set_text("");
         self.cursor = 0;
         cx.notify();
     }
 
-    fn render_text_with_cursor(&self) -> String {
+    fn save(&mut self, _: &Save, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.buffer.save().is_ok() {
+            cx.notify();
+        }
+    }
+
+    fn undo(&mut self, _: &Undo, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(new_cursor) = self.buffer.undo() {
+            self.cursor = new_cursor;
+            cx.notify();
+        }
+    }
+
+    fn redo(&mut self, _: &Redo, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(new_cursor) = self.buffer.redo() {
+            self.cursor = new_cursor;
+            cx.notify();
+        }
+    }
+
+    fn render_text_with_cursor(&self, is_focused: bool) -> String {
         let text = self.buffer.to_string();
+
+        if !is_focused {
+            // Don't show cursor when not focused
+            return if text.is_empty() { String::new() } else { text };
+        }
 
         if text.is_empty() {
             return "▎".to_string();
@@ -155,57 +199,92 @@ impl Focusable for TextEditor {
 impl Render for TextEditor {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let is_focused = self.focus_handle.is_focused(_window);
-        let content = self.render_text_with_cursor();
+        let content = self.render_text_with_cursor(is_focused);
+
+        let file_name = self.buffer.file_name().unwrap_or("Untitled");
+
+        let dirty_indicator = if self.buffer.is_dirty() { " ●" } else { "" };
 
         div()
-            .key_context("TextEditor")
-            .track_focus(&self.focus_handle)
-            // Register action handlers
-            .on_action(cx.listener(Self::backspace))
-            .on_action(cx.listener(Self::delete))
-            .on_action(cx.listener(Self::move_left))
-            .on_action(cx.listener(Self::move_right))
-            .on_action(cx.listener(Self::move_to_start))
-            .on_action(cx.listener(Self::move_to_end))
-            .on_action(cx.listener(Self::newline))
-            .on_action(cx.listener(Self::paste))
-            .on_action(cx.listener(Self::copy))
-            .on_action(cx.listener(Self::cut))
-            // Handle regular character input
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
-                // Only handle regular character input here
-                // Actions handle special keys
-                let key = event.keystroke.key.as_str();
-                if key == "space" {
-                    this.insert_char(' ', cx);
-                } else if key.len() == 1 {
-                    if let Some(c) = key.chars().next() {
-                        // Only insert if it's a printable character
-                        if !c.is_control() {
-                            this.insert_char(c, cx);
-                        }
-                    }
-                }
-            }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _event: &MouseDownEvent, window, cx| {
-                    window.focus(&this.focus_handle, cx);
-                }),
+            .flex()
+            .flex_col()
+            .w_full()
+            .h_full()
+            // Header with file name
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(rgb(0xe5e5e5))
+                    .bg(rgb(0xf9f9f9))
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(0x333333))
+                            .child(format!("{}{}", file_name, dirty_indicator)),
+                    ),
             )
-            .cursor(CursorStyle::IBeam)
-            // Styling
-            .p_4()
-            .bg(white())
-            .border_1()
-            .border_color(rgb(0xcccccc))
-            .rounded_md()
-            .min_h(px(200.))
-            .font_family("monospace")
-            .text_base()
-            .when(is_focused, |div: Div| {
-                div.border_color(rgb(0x0066ff)).border_2()
-            })
-            .child(content)
+            // Editor content
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .key_context("TextEditor")
+                    .track_focus(&self.focus_handle)
+                    // Register action handlers
+                    .on_action(cx.listener(Self::backspace))
+                    .on_action(cx.listener(Self::delete))
+                    .on_action(cx.listener(Self::move_left))
+                    .on_action(cx.listener(Self::move_right))
+                    .on_action(cx.listener(Self::move_to_start))
+                    .on_action(cx.listener(Self::move_to_end))
+                    .on_action(cx.listener(Self::newline))
+                    .on_action(cx.listener(Self::paste))
+                    .on_action(cx.listener(Self::copy))
+                    .on_action(cx.listener(Self::cut))
+                    .on_action(cx.listener(Self::save))
+                    .on_action(cx.listener(Self::undo))
+                    .on_action(cx.listener(Self::redo))
+                    // Handle regular character input
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {
+                        // Only handle regular character input here
+                        // Actions handle special keys
+                        let key = event.keystroke.key.as_str();
+                        if key == "space" {
+                            this.insert_char(' ', cx);
+                        } else if key.len() == 1 {
+                            if let Some(c) = key.chars().next() {
+                                // Only insert if it's a printable character
+                                if !c.is_control() {
+                                    this.insert_char(c, cx);
+                                }
+                            }
+                        }
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _event: &MouseDownEvent, window, cx| {
+                            window.focus(&this.focus_handle, cx);
+                        }),
+                    )
+                    .cursor(CursorStyle::IBeam)
+                    // Styling
+                    .p_4()
+                    .bg(white())
+                    // .border_1()
+                    // .border_color(rgb(0xcccccc))
+                    .rounded_md()
+                    .w_full()
+                    .h_full()
+                    .font_family("monospace")
+                    .text_base()
+                    // .when(is_focused, |div: Div| {
+                    //     div.border_color(rgb(0x0066ff)).border_2()
+                    // })
+                    .child(content),
+            )
     }
 }

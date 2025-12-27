@@ -66,6 +66,8 @@ impl Entry {
     }
 }
 
+use crate::components::TextEditor;
+
 pub struct Worktree {
     focus_handle: FocusHandle,
     root: Entry,
@@ -75,12 +77,16 @@ pub struct Worktree {
     _watcher: Option<RecommendedWatcher>,
     #[allow(dead_code)]
     _receiver: Option<Receiver<notify::Result<Event>>>,
+    editor: Option<Entity<TextEditor>>,
 }
 
 impl Worktree {
     pub fn new(path: impl AsRef<Path>, cx: &mut Context<Self>) -> std::io::Result<Self> {
         let path = path.as_ref();
-        let root = Entry::from_path(path)?;
+        let mut root = Entry::from_path(path)?;
+
+        // Expand only the root directory by default
+        root.is_expanded = true;
 
         // Set up filesystem watcher
         let (tx, rx) = channel();
@@ -96,7 +102,12 @@ impl Worktree {
             root_path: path.to_path_buf(),
             _watcher: watcher,
             _receiver: Some(rx),
+            editor: None,
         })
+    }
+
+    pub fn set_editor(&mut self, editor: Entity<TextEditor>) {
+        self.editor = Some(editor);
     }
 
     #[allow(dead_code)]
@@ -175,6 +186,11 @@ impl Worktree {
                     cx.listener(move |this, _event: &MouseDownEvent, _window, cx| {
                         if is_dir {
                             this.toggle_entry(&path, cx);
+                        } else if let Some(editor) = &this.editor {
+                            let path_clone = path.clone();
+                            editor.update(cx, |ed, cx| {
+                                ed.open_file(path_clone, cx);
+                            });
                         }
                     }),
                 )
@@ -211,22 +227,9 @@ impl Render for Worktree {
             .flex()
             .flex_col()
             .bg(white())
-            .border_1()
-            .border_color(rgb(0xcccccc))
-            .rounded_md()
             .overflow_hidden()
-            .max_h(px(500.))
+            .h_full()
             .track_focus(&self.focus_handle)
-            .child(
-                div()
-                    .p_2()
-                    .border_b_1()
-                    .border_color(rgb(0xeeeeee))
-                    .bg(rgb(0xf9f9f9))
-                    .text_sm()
-                    .font_weight(FontWeight::BOLD)
-                    .child(format!("📁 {}", self.root.name)),
-            )
             .child(self.render_entry(&self.root.clone(), 0, cx))
     }
 }

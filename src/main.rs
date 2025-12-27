@@ -20,6 +20,9 @@ fn main() {
             KeyBinding::new("cmd-v", Paste, Some("TextEditor")),
             KeyBinding::new("cmd-c", Copy, Some("TextEditor")),
             KeyBinding::new("cmd-x", Cut, Some("TextEditor")),
+            KeyBinding::new("cmd-s", Save, Some("TextEditor")),
+            KeyBinding::new("cmd-z", Undo, Some("TextEditor")),
+            KeyBinding::new("cmd-shift-z", Redo, Some("TextEditor")),
         ]);
 
         cx.open_window(WindowOptions::default(), |_, cx| {
