@@ -20,10 +20,12 @@ impl TextInput {
         self
     }
 
+    #[allow(dead_code)]
     pub fn content(&self) -> &str {
         &self.content
     }
 
+    #[allow(dead_code)]
     pub fn set_content(&mut self, content: impl Into<String>, cx: &mut Context<Self>) {
         self.content = content.into();
         cx.notify();

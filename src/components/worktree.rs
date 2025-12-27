@@ -69,8 +69,11 @@ impl Entry {
 pub struct Worktree {
     focus_handle: FocusHandle,
     root: Entry,
+    #[allow(dead_code)]
     root_path: PathBuf,
+    #[allow(dead_code)]
     _watcher: Option<RecommendedWatcher>,
+    #[allow(dead_code)]
     _receiver: Option<Receiver<notify::Result<Event>>>,
 }
 
@@ -96,6 +99,7 @@ impl Worktree {
         })
     }
 
+    #[allow(dead_code)]
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
         if let Ok(new_root) = Entry::from_path(&self.root_path) {
             // Preserve expansion state
@@ -105,6 +109,7 @@ impl Worktree {
         }
     }
 
+    #[allow(dead_code)]
     fn preserve_expansion_state(&self, old_entry: &mut Entry, new_entry: &Entry) {
         if old_entry.path == new_entry.path && old_entry.is_expanded {
             // This path was expanded, keep it expanded
